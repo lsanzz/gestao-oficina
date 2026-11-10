@@ -689,6 +689,7 @@ async function saveXQ(){
       if(x.dups.length)x.dups.forEach(d=>dups.push({nota_id:n.id,numero:d.numero,vencimento:d.vencimento,valor:d.valor}));
       else dups.push({nota_id:n.id,vencimento:addDays(n.data_emissao,f.prazo_dias),valor:n.valor})});
     await ins('duplicatas',dups);
+    const kk=await autoLigarNotas();if(kk)toast(`${kk} nota${kk==1?'':'s'} ligada${kk==1?'':'s'} à O.S. pelas peças.`);
     closeModal();toast(`${saved.length} nota${saved.length==1?'':'s'} salva${saved.length==1?'':'s'}.`);
     if(saved[0])MES=saved[saved.length-1].data_emissao.slice(0,7);
     render();
@@ -915,7 +916,8 @@ R.fechamento=()=>{
     <div class="month"><button data-act="diaPrev" aria-label="Dia anterior"><svg viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"/></svg></button><input type="date" id="diaPick" value="${DIA}" class="in" style="border:0;padding:4px 6px;width:auto;background:none"><button data-act="diaNext" aria-label="Próximo dia"><svg viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></svg></button></div>
     ${DIA!==today()?`<button class="btn sm ghost" data-act="diaHoje">Hoje</button>`:''}
     <div class="grow"></div>
-    <button class="btn pri" data-act="novaOS">${ic('plus')}Nova O.S.</button>
+    <button class="btn pri" data-act="importOS">${ic('up')}Importar O.S.</button>
+    <button class="btn" data-act="novaOS">${ic('plus')}O.S. manual</button>
     <button class="btn" data-act="importXml">${ic('up')}XML</button>
     <button class="btn" data-act="importPag">${ic('conta')}PagBank</button>
     <button class="btn icon" data-act="cfgCustos" title="Custos e percentuais">${ic('gear')}</button>
@@ -933,7 +935,7 @@ R.fechamento=()=>{
   </div>
   <div class="card" style="margin-top:16px;padding:6px 8px"><h3 style="padding:12px 10px 0">${ic('wrench')}Ordens de serviço<span class="r">${brl(r.venda)}</span></h3>
    ${r.os.length?`<div class="scroll"><table class="tbl cards"><thead><tr><th>O.S. / cliente</th><th class="right">Total</th><th class="right hide-m">Cartão</th><th class="hide-m">Óleo</th><th class="right hide-m">Peças</th><th class="hide-m">Mecânico(s)</th><th></th></tr></thead><tbody>
-   ${r.os.map(o=>{const pe=sum(notasDaOS(o).filter(pecaNota),n=>n.valor);return`<tr data-act="editOS" data-id="${o.id}" style="cursor:pointer"><td><b>${esc(o.cliente)}</b> <span class="muted">${esc(o.carro||'')}</span>${o.numero?`<div class="muted" style="font-size:12px">O.S. ${esc(o.numero)}</div>`:''}</td><td class="right num"><b>${brl(o.valor_total)}</b></td><td class="right num hide-m">${cartaoDe(o)?brl(cartaoDe(o)):'—'}</td><td class="hide-m" style="font-size:12.5px">${(o.oleo||[]).map(l=>`${n2(l.litros).replace(',00','')}L ${esc(l.tipo)}`).join(', ')}${o.filtros?` · ${o.filtros} filtro${o.filtros>1?'s':''}`:''}${!(o.oleo||[]).length&&!o.filtros?'<span class="muted">—</span>':''}</td><td class="right num hide-m">${pe?brl(pe):'<span class="muted">—</span>'}</td><td class="hide-m" style="font-size:12.5px">${esc(mecN(o.mecanico_ids))||'<span class="muted">—</span>'}</td><td class="acts hide-m"><button class="btn icon ghost danger" data-act="delOS" data-id="${o.id}">${ic('del')}</button></td></tr>`}).join('')}</tbody></table></div>`:empty('wrench','Nenhuma O.S. lançada em '+fd(DIA)+'.',`<button class="btn pri" data-act="novaOS">${ic('plus')}Nova O.S.</button>`)}
+   ${r.os.map(o=>{const pe=sum(notasDaOS(o).filter(pecaNota),n=>n.valor);return`<tr data-act="editOS" data-id="${o.id}" style="cursor:pointer"><td><b>${esc(o.cliente)}</b> <span class="muted">${esc(o.carro||'')}${o.placa?' '+esc(o.placa):''}</span>${o.numero?`<div class="muted" style="font-size:12px">O.S. ${esc(o.numero)}</div>`:''}</td><td class="right num"><b>${brl(o.valor_total)}</b></td><td class="right num hide-m">${cartaoDe(o)?brl(cartaoDe(o)):'—'}</td><td class="hide-m" style="font-size:12.5px">${(o.oleo||[]).map(l=>`${n2(l.litros).replace(',00','')}L ${esc(l.tipo)}`).join(', ')}${o.filtros?` · ${o.filtros} filtro${o.filtros>1?'s':''}`:''}${!(o.oleo||[]).length&&!o.filtros?'<span class="muted">—</span>':''}</td><td class="right num hide-m">${pe?brl(pe):'<span class="muted">—</span>'}</td><td class="hide-m" style="font-size:12.5px">${esc(mecN(o.mecanico_ids))||'<span class="muted">—</span>'}</td><td class="acts hide-m"><button class="btn icon ghost danger" data-act="delOS" data-id="${o.id}">${ic('del')}</button></td></tr>`}).join('')}</tbody></table></div>`:empty('wrench','Nenhuma O.S. lançada em '+fd(DIA)+'.',`<button class="btn pri" data-act="novaOS">${ic('plus')}Nova O.S.</button>`)}
   </div>
   <div class="grid k2" style="margin-top:16px">
    <div class="card" style="padding:6px 8px"><h3 style="padding:12px 10px 0">${ic('nota')}Notas do dia<span class="r">${brl(r.peca)}</span></h3>
@@ -986,6 +988,7 @@ function osForm(o,after){
     <div class="full"><div class="f" style="margin-bottom:6px">Mecânico(s) <span class="muted" style="font-weight:400">— gera a produção para a comissão</span></div><div class="chips">${ms.map(m=>`<label class="chip ${o.mecanico_ids.includes(m.id)?'on':''}"><input type="checkbox" name="mec" value="${m.id}" ${o.mecanico_ids.includes(m.id)?'checked':''} hidden onchange="this.parentNode.classList.toggle('on',this.checked)">${esc(m.nome)}</label>`).join('')}</div></div>
     <label class="f">Valor para comissão <span class="muted" style="font-weight:400">(vazio = total da O.S.)</span><input class="in num" name="valor_comissao" inputmode="decimal" value="${o.valor_comissao!=null?n2(o.valor_comissao):''}"></label>
     <label class="f">Observação<input class="in" name="obs" value="${esc(o.obs||'')}"></label>
+    ${(o.itens||[]).length?`<details class="full"><summary class="muted" style="cursor:pointer">${o.itens.length} itens da O.S. (vhsys)</summary><table class="tbl" style="margin-top:8px">${o.itens.map(i=>`<tr><td>${esc(i.d)}</td><td class="muted">${i.t==='S'?'Serviço':'Produto'}</td><td class="right num">${i.q??''}</td><td class="right num">${brl(i.v)}</td></tr>`).join('')}</table></details>`:''}
   </form><datalist id="dlCliOS">${[...new Set(S.ordens.map(x=>x.cliente))].slice(-300).map(c=>`<option value="${esc(c)}">`).join('')}</datalist>`,
   async()=>{
     const fm=new FormData($('#fO'));const x=Object.fromEntries(fm);
@@ -1065,14 +1068,122 @@ function mostrarPag(its){
    <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" data-act="closeModal">Cancelar</button><button class="btn pri" id="pSave" ${novos.length?'':'disabled'}>${ic('check')}Importar ${novos.length}</button></div>`;
   $('#pSave').onclick=async()=>{const b=$('#pSave');b.disabled=true;b.innerHTML='<span class="spin"></span>';
     try{const rows=novos.map(i=>({...i,liquido:i.liquido!=null?+i.liquido.toFixed(2):null,bruto:+i.bruto.toFixed(2)}));for(let k=0;k<rows.length;k+=500)await ins('cartao_mov',rows.slice(k,k+500));
-      autoLigarCartao();closeModal();toast(`${rows.length} venda${rows.length==1?'':'s'} no cartão importada${rows.length==1?'':'s'}.`);render()}catch(e){toast(errMsg(e),true);b.disabled=false;b.textContent='Tentar de novo'}};
+      await autoLigarCartao();closeModal();toast(`${rows.length} venda${rows.length==1?'':'s'} no cartão importada${rows.length==1?'':'s'}.`);render()}catch(e){toast(errMsg(e),true);b.disabled=false;b.textContent='Tentar de novo'}};
 }
-/* liga venda do cartão à O.S. do mesmo dia quando o valor bate exatamente */
+/* liga vendas do cartão às O.S. do mesmo dia: 1 venda = total da O.S., ou N vendas (N = parcelas de pagamento) que somam o total */
 async function autoLigarCartao(){
-  for(const m of S.cartao_mov.filter(m=>!m.ordem_id&&movValido(m))){
-    const cands=S.ordens.filter(o=>o.data===m.data&&Math.abs((+o.cartao||+o.valor_total)-m.bruto)<0.01&&!S.cartao_mov.some(x=>x.ordem_id===o.id));
-    if(cands.length===1){try{await upd('cartao_mov',m.id,{ordem_id:cands[0].id})}catch(e){}}
+  const livres=d=>S.cartao_mov.filter(m=>!m.ordem_id&&movValido(m)&&m.data===d);
+  const dias=[...new Set(S.cartao_mov.filter(m=>!m.ordem_id).map(m=>m.data))];
+  for(const d of dias){
+    const os=S.ordens.filter(o=>o.data===d&&!S.cartao_mov.some(x=>x.ordem_id===o.id)).sort((a,b)=>(a.parcelas_pgto||1)-(b.parcelas_pgto||1));
+    for(const o of os){
+      const alvo=+o.cartao||+o.valor_total;const L=livres(d);let pick=null;
+      const um=L.filter(m=>Math.abs(m.bruto-alvo)<0.01);
+      if(um.length&&(o.parcelas_pgto||1)<=1)pick=[um[0]];
+      else if((o.parcelas_pgto||1)>=2){
+        const k=o.parcelas_pgto;const found=[];
+        const rec=(i,acc,sumv)=>{if(found.length>1)return;if(acc.length===k){if(Math.abs(sumv-alvo)<0.01)found.push([...acc]);return}for(let j=i;j<L.length&&j<60;j++){acc.push(L[j]);rec(j+1,acc,sumv+ +L[j].bruto);acc.pop()}};
+        if(k<=4)rec(0,[],0);
+        if(found.length===1)pick=found[0];
+      }
+      if(pick){for(const m of pick){try{await upd('cartao_mov',m.id,{ordem_id:o.id})}catch(e){}}}
+    }
   }
+}
+
+/* ===== Notas ↔ O.S. por peças em comum ===== */
+const STOP=new Set(['PARA','COM','DIANT','DIANTEIRO','DIANTEIRA','TRASEIRO','TRASEIRA','KIT','JOGO','PECA','PECAS','LADO','UNIV','ORIGINAL','MOTOR','MAO','OBRA','TROCA','SERVICO']);
+const toks=s=>norm(s).replace(/[^A-Z0-9 ]/g,' ').split(/\s+/).filter(t=>t.length>=4&&!STOP.has(t)&&!/^\d+$/.test(t));
+function scoreNotaOS(n,o){
+  const prods=(o.itens||[]).filter(i=>i.t!=='S');if(!prods.length||!(n.itens||[]).length)return 0;
+  const ot=new Set(prods.flatMap(i=>toks(i.d)));
+  const val=sum(n.itens.filter(i=>toks(i.d).some(t=>ot.has(t)||[...ot].some(x=>x.length>=5&&t.length>=5&&(x.startsWith(t.slice(0,5))||t.startsWith(x.slice(0,5)))))),i=>i.v);
+  const tot=sum(n.itens,i=>i.v)||+n.valor;return tot?val/tot:0;
+}
+async function autoLigarNotas(){
+  let k=0;
+  for(const n of S.notas.filter(n=>!n.ordem_id&&pecaNota(n)&&(n.itens||[]).length)){
+    const cands=S.ordens.filter(o=>Math.abs(diff(o.data)-diff(n.data_emissao))<=3).map(o=>({o,s:scoreNotaOS(n,o)})).filter(x=>x.s>=0.5).sort((a,b)=>b.s-a.s);
+    if(cands.length&&(cands.length===1||cands[0].s>cands[1].s)){const o=cands[0].o;try{await upd('notas',n.id,{ordem_id:o.id,cliente:o.cliente,carro:o.carro,os_numero:o.numero});k++}catch(e){}}
+  }
+  return k;
+}
+
+/* ===== Importar relatório de O.S. do vhsys ===== */
+const PLACA=/\b([A-Z]{3}-?\d[A-Z0-9]\d{2})\s*$/;
+function parseVhsys(html){
+  const doc=new DOMParser().parseFromString(html,'text/html');
+  const grid=doc.getElementById('tblGrid');if(!grid)throw new Error('Não parece um relatório de Ordem de Serviço do vhsys.');
+  const heads=[...grid.querySelectorAll(':scope > thead th')].map(th=>th.dataset.field||norm(th.textContent));
+  const ix=f=>heads.indexOf(f);
+  const rows=[...grid.querySelectorAll(':scope > tbody > tr')];
+  const out=[];let cur=null;
+  for(const tr of rows){
+    if(tr.classList.contains('table-row-body')){
+      const c=[...tr.querySelectorAll(':scope > td')].map(td=>td.textContent.replace(/\s+/g,' ').trim());
+      const g=f=>ix(f)>=0?c[ix(f)]:'';
+      let cli=g('Cliente').toUpperCase(),placa=null;const pm=cli.match(PLACA);if(pm){placa=pm[1];cli=cli.replace(PLACA,'').trim()}
+      cur={numero:g('Ordem'),cliente:cli,placa,tipo:g('TipoOS'),tecnicos:g('Vendedor').toUpperCase().split(/\s*(?:\/|,|;|\+|&|\bE\b)\s*/).map(s=>s.trim()).filter(Boolean),parcelas:parseInt(g('TotalParcelas'))||1,data:parseData(g('DataPedido'))||parseData(g('DataRealizacao'))||parseData(g('DataCad')),itens:[]};
+      out.push(cur);
+    }else if(cur&&tr.classList.contains('Table_L1')){
+      const sub=tr.querySelector('table[data-subtable]');if(!sub)continue;
+      const sh=[...sub.querySelectorAll(':scope > thead th')].map(th=>th.dataset.field);
+      for(const r of sub.querySelectorAll(':scope > tbody > tr')){
+        const c=[...r.querySelectorAll(':scope > td')].map(td=>td.textContent.replace(/\s+/g,' ').trim());const g=f=>sh.indexOf(f)>=0?c[sh.indexOf(f)]:'';
+        if(/^S/i.test(norm(g('ItemRejeitado'))))continue;
+        cur.itens.push({d:g('Produto'),t:/SERV/.test(norm(g('Tipo')))?'S':'P',q:pnum(g('Qtde')),v:pnum(g('ValorTotal'))});
+      }
+    }
+  }
+  for(const o of out){
+    o.total=+sum(o.itens,i=>i.v).toFixed(2);
+    o.oleo=[];o.filtros=0;
+    for(const i of o.itens.filter(i=>i.t==='P')){const d=norm(i.d);
+      const vm=d.match(/\b(\d{1,2})\s?W\s?-?(\d{2})\b/);
+      if(/OLEO|LUBRIF/.test(d)&&!/FILTRO/.test(d)&&vm){o.oleo.push({tipo:`${vm[1]}W${vm[2]}`,litros:i.q})}
+      else if(/FILTRO/.test(d)&&/OLEO|LUBRIF/.test(d))o.filtros+=i.q||1;
+    }
+  }
+  return out.filter(o=>o.data&&o.itens.length);
+}
+let OSQ=[];
+function importOS(){
+  modal('Importar O.S. do vhsys',`<div class="drop" id="odrop">${ic('wrench')}<p>Arraste o <b>Relatório de Ordem de Serviço</b> (.html) exportado do vhsys</p><label class="btn pri">${ic('up')}Escolher arquivo<input type="file" id="of" accept=".html,.htm" multiple hidden></label></div><div id="ores" style="margin-top:14px"></div>`,null,{noFoot:true,wide:true});
+  const go=async fs=>{try{OSQ=[];for(const f of fs)OSQ.push(...parseVhsys(await f.text()));
+      const ja=new Set(S.ordens.map(o=>o.numero).filter(Boolean));const seen=new Set();
+      OSQ=OSQ.filter(o=>{if(seen.has(o.numero))return false;seen.add(o.numero);return true});
+      OSQ.forEach(o=>{o.dup=!!(o.numero&&ja.has(o.numero));o.on=!o.dup});drawOSQ()}catch(e){$('#ores').innerHTML=`<div class="msg bad">${esc(e.message)}</div>`}};
+  const dz=$('#odrop');['dragenter','dragover'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.add('over')}));['dragleave','drop'].forEach(e=>dz.addEventListener(e,ev=>{ev.preventDefault();dz.classList.remove('over')}));
+  dz.addEventListener('drop',ev=>go([...ev.dataTransfer.files]));$('#of').onchange=e=>go([...e.target.files]);
+}
+const mecPorNome=n=>S.mecanicos.find(m=>norm(m.nome)===norm(n));
+function drawOSQ(){
+  const box=$('#ores');if(!OSQ.length){box.innerHTML=empty('alert','Nenhuma O.S. encontrada nesse arquivo.');return}
+  const c=cfg();const sel=OSQ.filter(o=>o.on);
+  const novos=[...new Set(sel.flatMap(o=>o.tecnicos).filter(t=>!mecPorNome(t)))];
+  box.innerHTML=`<div class="bar"><b>${OSQ.length} O.S. lida${OSQ.length==1?'':'s'}</b><span class="muted">${OSQ.filter(o=>o.dup).length} já importada(s)</span><div class="grow"></div><b class="num">${sel.length} selecionada(s) · ${brl(sum(sel,o=>o.total))}</b></div>
+  ${novos.length?`<div class="msg" style="margin-bottom:10px">Técnico(s) novo(s) que vou cadastrar como mecânico: <b>${novos.map(esc).join(', ')}</b></div>`:''}
+  <div class="scroll"><table class="tbl"><thead><tr><th></th><th>O.S.</th><th>Cliente</th><th>Data</th><th>Técnico(s)</th><th>Óleo / filtro</th><th class="right">Total</th></tr></thead><tbody>
+  ${OSQ.map((o,i)=>`<tr style="${o.dup?'opacity:.5':''}"><td><input type="checkbox" data-oi="${i}" ${o.on?'checked':''}></td><td class="num">${esc(o.numero)}</td><td><b>${esc(o.cliente)}</b>${o.placa?` <span class="muted" style="font-size:12px">${esc(o.placa)}</span>`:''}${o.dup?'<div><span class="st neutro">já importada</span></div>':''}</td><td>${fd(o.data)}</td><td>${o.tecnicos.map(t=>`<span class="tag ${mecPorNome(t)?'peca_cliente':'oleo_estoque'}">${esc(t)}</span>`).join(' ')||'<span class="muted">—</span>'}</td>
+   <td style="font-size:12.5px">${o.oleo.map(l=>`${l.litros}L ${l.tipo}${c.oleos[l.tipo]==null?' <span style="color:var(--bad)">(sem custo)</span>':''}`).join(', ')}${o.filtros?` · ${o.filtros} filtro`:''}${!o.oleo.length&&!o.filtros?'<span class="muted">—</span>':''}</td><td class="right num"><b>${brl(o.total)}</b>${o.parcelas>1?`<div class="muted" style="font-size:11.5px">${o.parcelas} pagamentos</div>`:''}</td></tr>`).join('')}
+  </tbody></table></div>
+  <div class="row" style="justify-content:flex-end;margin-top:14px"><button class="btn" data-act="closeModal">Cancelar</button><button class="btn pri" id="oSave" ${sel.length?'':'disabled'}>${ic('check')}Importar ${sel.length} O.S.</button></div>`;
+  box.querySelectorAll('[data-oi]').forEach(cb=>cb.onchange=()=>{OSQ[+cb.dataset.oi].on=cb.checked;drawOSQ()});
+  $('#oSave').onclick=saveOSQ;
+}
+async function saveOSQ(){
+  const sel=OSQ.filter(o=>o.on);const b=$('#oSave');b.disabled=true;b.innerHTML='<span class="spin"></span> Importando…';
+  try{
+    const novos=[...new Set(sel.flatMap(o=>o.tecnicos).filter(t=>!mecPorNome(t)))];
+    if(novos.length)await ins('mecanicos',novos.map(nome=>({nome})));
+    const rows=sel.map(o=>({data:o.data,numero:o.numero,cliente:o.cliente,placa:o.placa,carro:null,valor_total:o.total,cartao:0,taxa:null,oleo:o.oleo,filtros:o.filtros,mecanico_ids:o.tecnicos.map(t=>mecPorNome(t)?.id).filter(Boolean),itens:o.itens,parcelas_pgto:o.parcelas,obs:o.placa?'Placa '+o.placa:null}));
+    const saved=await ins('ordens',rows);
+    const prod=saved.filter(o=>o.mecanico_ids.length).map(o=>({ordem_id:o.id,data:o.data,mecanico_ids:o.mecanico_ids,valor:o.valor_total,cliente:o.cliente,os_numero:o.numero}));
+    await ins('producao',prod);
+    await autoLigarCartao();const k=await autoLigarNotas();
+    closeModal();toast(`${saved.length} O.S. importada${saved.length==1?'':'s'}${k?` · ${k} nota${k==1?'':'s'} ligada${k==1?'':'s'} automaticamente`:''}.`);
+    const ds=saved.map(o=>o.data).sort();DIA=ds[ds.length-1];MES=DIA.slice(0,7);if(VIEW!=='fechamento')VIEW='fechamento';render();
+  }catch(e){toast(errMsg(e),true);b.disabled=false;b.textContent='Tentar de novo'}
 }
 function copiarDiaDiario(){const t=diarioTSV(DIA,DIA);if(!t.n)return toast('Nada para copiar neste dia.',true);copyText(t.tsv).then(()=>toast(`${t.n} linha${t.n==1?'':'s'} do DIARIO copiada${t.n==1?'':'s'}.`))}
 
@@ -1172,6 +1283,7 @@ document.addEventListener('click',async e=>{
     case'editOS':return osForm(S.ordens.find(x=>x.id===id));
     case'delOS':{e.stopPropagation();const o=S.ordens.find(x=>x.id===id);if(!confirm(`Excluir a O.S. de ${o.cliente}?`))return;await del('ordens',id);S.producao=S.producao.filter(p=>p.ordem_id!==id);S.notas.forEach(n=>{if(n.ordem_id===id)n.ordem_id=null});S.cartao_mov.forEach(m=>{if(m.ordem_id===id)m.ordem_id=null});toast('O.S. excluída.');return render()}
     case'importPag':return importPag();
+    case'importOS':return importOS();
     case'cfgCustos':return cfgCustos();
     case'delMov':if(!confirm('Excluir esta venda do cartão?'))return;await del('cartao_mov',id);return render();
     case'copiarMensal':return copyText(mensalTSV(DIA)).then(()=>toast('Linha MENSAL copiada. Cole na coluna A do dia.'));
