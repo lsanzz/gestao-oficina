@@ -1196,7 +1196,7 @@ $('#authForm').addEventListener('submit',async e=>{
 });
 $('#btnSignup').onclick=async()=>{
   const f=$('#authForm');if(!f.reportValidity())return;const o=Object.fromEntries(new FormData(f));
-  const{data,error}=await sb.auth.signUp({email:o.email,password:o.senha});
+  const{data,error}=await sb.auth.signUp({email:o.email,password:o.senha,options:{emailRedirectTo:location.protocol.startsWith('http')?location.origin:undefined}});
   if(error)return authMsg(error.message,'bad');
   if(!data.session)authMsg('Conta criada! Abra o e-mail que o Supabase enviou, clique no link de confirmação e depois volte aqui para entrar.','ok');
 };
