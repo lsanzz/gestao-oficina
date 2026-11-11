@@ -262,7 +262,8 @@ const HIST=[["2026-09-28","IGOR AUDI","MOTORS",245.79],["2026-09-28","DAVI COROL
 const COLUNAS_DIARIO=['ESCAP CIA','ROLEMAR','DPK','PTD','DIVERSOS','AUTOZONE','ACACIA','COBRA','MOTORS'];
 const CORES=['#2f6bff','#12a150','#e5484d','#d98a00','#8b5cf6','#0ea5e9','#ec4899','#14b8a6','#f97316','#64748b','#84cc16','#a855f7'];
 const CAT={peca_cliente:'Peça de cliente',oleo_estoque:'Óleo / estoque',servico_terceiro:'Serviço terceirizado'};
-const SEED_FORN=[['ESCAP CIA','fechamento','servico_terceiro'],['ROLEMAR'],['DPK'],['PTD'],['DIVERSOS'],['AUTOZONE'],['ACACIA'],['COBRA'],['MOTORS']];
+// [nome, cobrança, categoria padrão, palavras do emitente no XML]
+const SEED_FORN=[['ESCAP CIA','fechamento','servico_terceiro'],['ROLEMAR',null,null,['ROLEMAR','GIRANDO']],['DPK',null,null,['DPK','AUTOZ']],['PTD'],['DIVERSOS'],['AUTOZONE'],['ACACIA'],['COBRA'],['MOTORS'],['FURACAO'],['WEST',null,'oleo_estoque',['WEST']]];
 const SEED_PARC=[['PRONAMPE',2699,42,39],['UP',1937.63,30,26],['PRONAMPE',1554,42,32],['PAI',2875.07,72,57],['ENTRADA AP',1552,24,0],['BMW 1250',1568.17,36,3],['PRONAMPE',316,48,13],['BMW X3',3441.15,48,9],['PARCELA AP',7500,40,0],['PRONAMPE',1814,48,4],['CONSÓRCIO',533.1,57,0],['CONSÓRCIO',655.78,57,0]];
 
 /* ================= ICONS ================= */
@@ -350,10 +351,23 @@ const fornCor=f=>f?.cor||CORES[(S.fornecedores.indexOf(f)+CORES.length)%CORES.le
 
 async function seed(){
   if(S.fornecedores.length)return;
-  await ins('fornecedores',SEED_FORN.map((r,i)=>({nome:r[0],modo_cobranca:r[1]||'boleto',ordem:i,cor:CORES[i%CORES.length],palavras:[r[0]]})));
+  await ins('fornecedores',SEED_FORN.map((r,i)=>({nome:r[0],modo_cobranca:r[1]||'boleto',categoria_padrao:r[2]||null,ordem:i,cor:CORES[i%CORES.length],palavras:r[3]||[r[0]]})));
   if(!S.mecanicos.length){await ins('mecanicos',['ANDRE','RENAN','GABRIEL'].map(nome=>({nome})))}
   if(!S.comissoes.length){await ins('comissoes',{mecanico_id:null,percentual:12,vigente_desde:'2026-01-01'})}
   if(!S.parcelamentos.length){await ins('parcelamentos',SEED_PARC.map(([descricao,valor_parcela,total_parcelas,parcelas_pagas])=>({descricao,valor_parcela,total_parcelas,parcelas_pagas})))}
+}
+
+// aplica nomes/apelidos novos de autopeças em contas já criadas (não apaga nada do que você editou)
+async function atualizarPadroes(){
+  const V=2;if((S.config.find(c=>c.chave==='padroes')?.valor?.v||0)>=V)return;
+  for(const [nome,modo,cat,pals] of SEED_FORN){
+    const f=S.fornecedores.find(x=>norm(x.nome)===norm(nome));
+    if(!f){await ins('fornecedores',{nome,modo_cobranca:modo||'boleto',categoria_padrao:cat||null,ordem:S.fornecedores.length,cor:CORES[S.fornecedores.length%CORES.length],palavras:pals||[nome]});continue}
+    const falt=(pals||[]).filter(p=>!(f.palavras||[]).some(q=>norm(q)===norm(p)));
+    const patch={};if(falt.length)patch.palavras=[...(f.palavras||[]),...falt];if(cat&&!f.categoria_padrao)patch.categoria_padrao=cat;
+    if(Object.keys(patch).length)await upd('fornecedores',f.id,patch);
+  }
+  const{data,error}=await sb.from('config').upsert({chave:'padroes',valor:{v:V}}).select().single();if(!error){S.config=S.config.filter(c=>c.chave!=='padroes');S.config.push(data)}
 }
 
 /* ================= DOMAIN ================= */
@@ -622,12 +636,14 @@ function detectForn(x){
   const c=x.cnpj;const raiz=c.slice(0,8);
   let f=S.fornecedores.find(f=>(f.cnpjs||[]).some(k=>onlyDig(k)===c));
   if(!f&&raiz)f=S.fornecedores.find(f=>(f.cnpjs||[]).some(k=>onlyDig(k).slice(0,8)===raiz));
-  if(!f){const nm=norm(x.nome+' '+x.fant);f=S.fornecedores.find(f=>(f.palavras||[]).concat(f.nome).some(p=>p&&nm.includes(norm(p))))}
+  if(!f){// palavra inteira no nome do emitente; a mais longa vence (ex.: AUTOZONE ≠ AUTOZ)
+    const nm=' '+norm(x.nome+' '+x.fant).replace(/[^A-Z0-9]+/g,' ')+' ';let best=0;
+    for(const fo of S.fornecedores.filter(fo=>fo.ativo!==false))for(const p of (fo.palavras||[]).concat(fo.nome)){const w=norm(p).replace(/[^A-Z0-9]+/g,' ').trim();if(w&&nm.includes(' '+w+' ')&&w.length>best){best=w.length;f=fo}}}
   return f;
 }
 function guessCat(x,f){
   if(x.itens.length&&x.itens.every(i=>/OLEO|LUBRIF|FILTRO/.test(norm(i.d))))return'oleo_estoque';
-  if(f&&SEED_FORN.find(s=>s[0]===f.nome&&s[2]))return SEED_FORN.find(s=>s[0]===f.nome)[2];
+  if(f?.categoria_padrao)return f.categoria_padrao;
   return'peca_cliente';
 }
 let XQ=[];
@@ -1203,10 +1219,11 @@ function fornForm(f){
    <label class="f">Cor<input class="in" type="color" name="cor" value="${f.cor||'#2f6bff'}" style="height:42px;padding:4px"></label>
    <label class="f">Forma de cobrança<select class="in" name="modo_cobranca"><option value="boleto" ${f.modo_cobranca==='boleto'?'selected':''}>Boleto por nota</option><option value="fechamento" ${f.modo_cobranca==='fechamento'?'selected':''}>Fechamento (várias notas)</option></select></label>
    <label class="f">Prazo padrão (dias)<input class="in num" type="number" min="0" name="prazo_dias" value="${f.prazo_dias}"></label>
+   <label class="f full">Categoria padrão das notas<select class="in" name="categoria_padrao"><option value="">Automática (pelos itens da nota)</option>${catOptions(f.categoria_padrao)}</select></label>
    <label class="f full">CNPJs (um por linha)<textarea class="in" name="cnpjs" rows="3">${(f.cnpjs||[]).join('\n')}</textarea></label>
    <label class="f full">Palavras no nome do emitente (separadas por vírgula)<input class="in" name="palavras" value="${esc((f.palavras||[]).join(', '))}"></label>
    <label class="f full row"><input type="checkbox" name="ativo" ${f.ativo?'checked':''}> Ativa</label></form>`,
-  async()=>{const o=Object.fromEntries(new FormData($('#fFo')));const row={nome:o.nome.trim().toUpperCase(),cor:o.cor,modo_cobranca:o.modo_cobranca,prazo_dias:+o.prazo_dias||0,cnpjs:o.cnpjs.split(/[\n,;]/).map(onlyDig).filter(Boolean),palavras:o.palavras.split(',').map(s=>s.trim()).filter(Boolean),ativo:!!o.ativo};
+  async()=>{const o=Object.fromEntries(new FormData($('#fFo')));const row={nome:o.nome.trim().toUpperCase(),cor:o.cor,modo_cobranca:o.modo_cobranca,prazo_dias:+o.prazo_dias||0,cnpjs:o.cnpjs.split(/[\n,;]/).map(onlyDig).filter(Boolean),palavras:o.palavras.split(',').map(s=>s.trim()).filter(Boolean),ativo:!!o.ativo,categoria_padrao:o.categoria_padrao||null};
     if(f.id)await upd('fornecedores',f.id,row);else await ins('fornecedores',{...row,ordem:S.fornecedores.length});toast('Autopeça salva.');render()});
 }
 function backup(){
@@ -1317,7 +1334,7 @@ async function start(session){
   if(!USER){$('#app').hidden=true;$('#auth').hidden=false;return}
   $('#auth').hidden=true;$('#app').hidden=false;$('#who').textContent=USER.email;
   $('#view').innerHTML='<div class="loading"><span class="spin"></span></div>';
-  try{await loadAll();await seed();render()}catch(e){$('#view').innerHTML=`<div class="card">${empty('alert','Não consegui carregar os dados: '+esc(errMsg(e)),'<button class="btn pri" onclick="location.reload()">Tentar de novo</button>')}</div>`}
+  try{await loadAll();await seed();await atualizarPadroes();render()}catch(e){$('#view').innerHTML=`<div class="card">${empty('alert','Não consegui carregar os dados: '+esc(errMsg(e)),'<button class="btn pri" onclick="location.reload()">Tentar de novo</button>')}</div>`}
 }
 if(!window.supabase){document.body.innerHTML='<div style="padding:40px;font-family:system-ui">Sem internet: não consegui carregar o sistema. Verifique a conexão e recarregue a página.</div>'}
 else{
