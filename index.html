@@ -349,7 +349,7 @@ const lsSet=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v));return true}ca
 let sb=null,USER=null;
 const S={contas_bancarias:[],extrato:[],receber:[],pagar:[],ordens:[],cartao_mov:[],config:[],fornecedores:[],notas:[],duplicatas:[],fechamentos:[],mecanicos:[],comissoes:[],producao:[],parcelamentos:[],despesas:[]};
 let MES=today().slice(0,7);
-let VIEW=lsGet('og.view','inicio');
+let VIEW=lsGet('og.view','inicio');if(VIEW==='empresa')VIEW='contas';
 const UI={notaCat:'',notaForn:'',notaQ:'',contaTab:'aberto'};
 
 async function fetchAll(t){
@@ -406,9 +406,11 @@ function pctFor(mecId,data){
 }
 function producaoMes(m){
   const R={};S.mecanicos.forEach(x=>R[x.id]={mec:x,total:0,com:0,qtd:0});
+  const recebe=id=>S.mecanicos.find(x=>x.id===id)?.comissiona!==false;
   for(const p of S.producao.filter(p=>inMes(p.data,m))){
-    const share=+p.valor/p.mecanico_ids.length;
-    for(const id of p.mecanico_ids){if(!R[id])continue;R[id].total+=share;R[id].com+=share*pctFor(id,p.data)/100;R[id].qtd++}
+    const ids=p.mecanico_ids.filter(recebe);if(!ids.length)continue; // O.S. só do dono: sem comissão
+    const share=+p.valor/ids.length;
+    for(const id of ids){if(!R[id])continue;R[id].total+=share;R[id].com+=share*pctFor(id,p.data)/100;R[id].qtd++}
   }
   return Object.values(R);
 }
@@ -416,17 +418,17 @@ function producaoMes(m){
 /* ================= NAV / RENDER ================= */
 const VIEWS=[
  ['inicio','Início','home'],['fechamento','Fechamento diário','rel'],['notas','Notas fiscais','nota'],['contas','Contas a pagar','conta'],
- ['salarios','Salários','user'],['empresa','Parcelas e despesas','bank'],['autopecas','Autopeças','store']
+ ['salarios','Salários','user'],['autopecas','Autopeças','store']
 ];
 function buildNav(){
   const venc=aPagar().filter(x=>x.venc<=today()).length;
   $('#nav').innerHTML='<div class="pill" id="pill"></div>'+VIEWS.map(([k,t,i])=>`<button data-v="${k}" class="${k===VIEW?'on':''}">${ic(i)}${t}${k==='contas'&&venc?`<span class="badge">${venc}</span>`:''}</button>`).join('');
-  $('#bottom').innerHTML=VIEWS.filter(v=>v[0]!=='autopecas'&&v[0]!=='empresa').map(([k,t,i])=>`<button data-v="${k}" class="${k===VIEW?'on':''}">${ic(i)}${t.split(' ')[0]}</button>`).join('')+`<button data-v="mais" class="${['autopecas','empresa'].includes(VIEW)?'on':''}">${ic('layers')}Mais</button>`;
+  $('#bottom').innerHTML=VIEWS.filter(v=>v[0]!=='autopecas').map(([k,t,i])=>`<button data-v="${k}" class="${k===VIEW?'on':''}">${ic(i)}${t.split(' ')[0]}</button>`).join('')+`<button data-v="mais" class="${['autopecas'].includes(VIEW)?'on':''}">${ic('layers')}Mais</button>`;
   movePill();
 }
 function movePill(){const b=$('#nav button.on'),p=$('#pill');if(b&&p){p.style.transform=`translateY(${b.offsetTop}px)`;p.style.opacity=1}else if(p)p.style.opacity=0}
 function go(v){
-  if(v==='mais'){return modal('Mais',`<div class="grid">${VIEWS.filter(x=>['empresa','autopecas'].includes(x[0])).map(([k,t,i])=>`<button class="btn" data-go="${k}" style="justify-content:flex-start;padding:14px">${ic(i)}${t}</button>`).join('')}<button class="btn" data-act="tema" style="justify-content:flex-start;padding:14px">${ic('gear')}Alternar tema</button><button class="btn danger" data-act="sair" style="justify-content:flex-start;padding:14px">${ic('x')}Sair</button></div>`,null,{noFoot:true})}
+  if(v==='mais'){return modal('Mais',`<div class="grid">${VIEWS.filter(x=>['autopecas'].includes(x[0])).map(([k,t,i])=>`<button class="btn" data-go="${k}" style="justify-content:flex-start;padding:14px">${ic(i)}${t}</button>`).join('')}<button class="btn" data-act="tema" style="justify-content:flex-start;padding:14px">${ic('gear')}Alternar tema</button><button class="btn danger" data-act="sair" style="justify-content:flex-start;padding:14px">${ic('x')}Sair</button></div>`,null,{noFoot:true})}
   VIEW=v;lsSet('og.view',v);closeModal();render();window.scrollTo({top:0,behavior:'smooth'});
 }
 function render(){
@@ -749,7 +751,7 @@ function despesaForm(d){
 
 /* ---------- SALÁRIOS ---------- */
 R.salarios=()=>{
-  const pr=producaoMes(MES).filter(x=>x.mec.ativo||x.total);
+  const pr=producaoMes(MES).filter(x=>(x.mec.ativo&&x.mec.comissiona!==false)||x.total);
   const ps=S.producao.filter(p=>inMes(p.data,MES)).sort((a,b)=>b.data.localeCompare(a.data));
   const padrao=pctFor('__none__',today());
   const nomes=ids=>ids.map(id=>S.mecanicos.find(m=>m.id===id)?.nome||'?').join(' / ');
@@ -788,9 +790,9 @@ function cfgCom(){
   async()=>{const o=Object.fromEntries(new FormData($('#fC')));const pct=pnum(o.pct);if(pct<0||pct>100)throw new Error('Percentual inválido.');await ins('comissoes',{mecanico_id:o.mec||null,percentual:pct,vigente_desde:o.desde});toast('Comissão atualizada.');render()});
 }
 function mecs(){
-  modal('Mecânicos',`<div id="mList">${S.mecanicos.map(m=>`<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)"><input class="in" data-mid="${m.id}" value="${esc(m.nome)}"><label class="row" style="font-size:13px;white-space:nowrap"><input type="checkbox" data-mat="${m.id}" ${m.ativo?'checked':''}> ativo</label></div>`).join('')}</div>
+  modal('Mecânicos',`<div id="mList">${S.mecanicos.map(m=>`<div class="row" style="padding:6px 0;border-bottom:1px solid var(--line)"><input class="in" data-mid="${m.id}" value="${esc(m.nome)}"><label class="row" style="font-size:13px;white-space:nowrap"><input type="checkbox" data-mat="${m.id}" ${m.ativo?'checked':''}> ativo</label><label class="row" style="font-size:13px;white-space:nowrap"><input type="checkbox" data-mco="${m.id}" ${m.comissiona!==false?'checked':''}> recebe comissão</label></div>`).join('')}</div>
    <div class="row" style="margin-top:12px"><input class="in" id="mNovo" placeholder="Nome do novo mecânico"><button type="button" class="btn" id="mAdd">${ic('plus')}Adicionar</button></div>`,
-  async()=>{for(const m of S.mecanicos){const nome=document.querySelector(`[data-mid="${m.id}"]`).value.trim().toUpperCase(),ativo=document.querySelector(`[data-mat="${m.id}"]`).checked;if(nome&&(nome!==m.nome||ativo!==m.ativo))await upd('mecanicos',m.id,{nome,ativo})}toast('Mecânicos salvos.');render()});
+  async()=>{for(const m of S.mecanicos){const nome=document.querySelector(`[data-mid="${m.id}"]`).value.trim().toUpperCase(),ativo=document.querySelector(`[data-mat="${m.id}"]`).checked,comissiona=document.querySelector(`[data-mco="${m.id}"]`).checked;if(nome&&(nome!==m.nome||ativo!==m.ativo||comissiona!==(m.comissiona!==false)))await upd('mecanicos',m.id,{nome,ativo,comissiona})}toast('Mecânicos salvos.');render()});
   $('#mAdd').onclick=async()=>{const v=$('#mNovo').value.trim().toUpperCase();if(!v)return;try{await ins('mecanicos',{nome:v});mecs()}catch(e){toast(errMsg(e),true)}};
 }
 function copiarSal(){
@@ -1084,7 +1086,7 @@ function parseVhsys(html){
       const c=[...tr.querySelectorAll(':scope > td')].map(td=>td.textContent.replace(/\s+/g,' ').trim());
       const g=f=>ix(f)>=0?c[ix(f)]:'';
       let cli=g('Cliente').toUpperCase(),placa=null;const pm=cli.match(PLACA);if(pm){placa=pm[1];cli=cli.replace(PLACA,'').trim()}
-      cur={numero:g('Ordem'),cliente:cli,placa,tipo:g('TipoOS'),tecnicos:g('Vendedor').toUpperCase().split(/\s*(?:\/|,|;|\+|&|\bE\b)\s*/).map(s=>s.trim()).filter(Boolean),parcelas:parseInt(g('TotalParcelas'))||1,data:parseData(g('DataPedido'))||parseData(g('DataRealizacao'))||parseData(g('DataEntrega'))||parseData(g('DataCad')),totalRel:ix('ValorTotal')>=0?pnum(g('ValorTotal')):null,itens:[]};
+      cur={numero:g('Ordem'),cliente:cli,placa,tipo:g('TipoOS'),situacao:g('Situacao'),tecnicos:(g('Profissional')||g('Vendedor')).toUpperCase().split(/\s*(?:\/|,|;|\+|&|\bE\b)\s*/).map(s=>s.trim()).filter(Boolean),parcelas:parseInt(g('TotalParcelas'))||1,data:parseData(g('DataPedido'))||parseData(g('DataRealizacao'))||parseData(g('DataEntrega'))||parseData(g('DataCad')),totalRel:ix('ValorTotal')>=0?pnum(g('ValorTotal')):null,itens:[]};
       out.push(cur);
     }else if(cur&&tr.classList.contains('Table_L1')){
       const sub=tr.querySelector('table[data-subtable]');if(!sub)continue;
@@ -1105,7 +1107,7 @@ function parseVhsys(html){
       else if(/FILTRO/.test(d)&&/OLEO|LUBRIF/.test(d))o.filtros+=i.q||1;
     }
   }
-  return out.filter(o=>o.numero&&(o.itens.length||o.total));
+  return out.filter(o=>o.numero&&(o.itens.length||o.total)&&!/CANCEL/.test(norm(o.situacao)));
 }
 let OSQ=[];
 function importOS(){
@@ -1225,8 +1227,6 @@ function aPagar(){
     L.push({k:'pagar',id:p.id,venc:p.vencimento||p.emissao||today(),valor:+p.valor-+p.valor_pago,t:c.nome,s:[p.nf?'NF '+p.nf+(p.parcela?' · parc. '+p.parcela:''):(c.nome!==p.descricao?p.descricao:''),p.categoria&&p.categoria!=='Fornecedor'?p.categoria:''].filter(Boolean).join(' · ')||'Conta a pagar',cor:c.cor,tipo:'vhsys'})}
   for(const fe of S.fechamentos){if(fe.pago_em)continue;const f=F(fe.fornecedor_id);const q=S.notas.filter(n=>n.fechamento_id===fe.id).length;
     L.push({k:'fechamentos',id:fe.id,venc:fe.vencimento,valor:+fe.valor,t:f?.nome||'Fechamento',s:`Fechamento · ${q} nota${q==1?'':'s'}${fe.descricao?' · '+fe.descricao:''}`,cor:fornCor(f),tipo:'Fechamento'})}
-  for(const p of S.parcelamentos){if(!p.ativo||!p.proximo_vencimento)continue;
-    L.push({k:'parcelamentos',id:p.id,venc:p.proximo_vencimento,valor:+p.valor_parcela,t:p.descricao,s:`Parcela ${p.parcelas_pagas+1} de ${p.total_parcelas}`,cor:'#8b5cf6',tipo:'Parcela'})}
   for(const d of S.despesas){if(d.pago_em)continue;L.push({k:'despesas',id:d.id,venc:d.vencimento,valor:+d.valor,t:d.descricao,s:'Despesa',cor:'#64748b',tipo:'Despesa'})}
   return L.sort((a,b)=>a.venc.localeCompare(b.venc));
 }
@@ -1300,7 +1300,7 @@ R.contas=()=>{
     ${kpi('A receber',sum(ar,x=>x.valor),atr.length?`${atr.length} em atraso`:`${ar.length} conta${ar.length==1?'':'s'}`,'dl',atr.length?'warn':'ok')}
     ${kpi('Pago em '+MESES[+MES.slice(5)-1],sum(pagos,x=>x.v),`${pagos.length} pagamento${pagos.length==1?'':'s'}`,'check','ok')}
   </div>
-  <div style="margin-top:18px;flex-wrap:wrap" class="row"><div class="tabs">${[['aberto','A pagar'],['receber','A receber'],['fechar','A fechar'],['pagos','Pagos no mês']].map(([k,t])=>`<button data-tab="${k}" class="${tab===k?'on':''}">${t}</button>`).join('')}</div><div class="grow" style="flex:1"></div><button class="btn" data-act="importTudo">${ic('up')}Importar do vhsys</button><button class="btn" data-act="novaDespesa">${ic('plus')}Despesa avulsa</button></div>
+  <div style="margin-top:18px;flex-wrap:wrap" class="row"><div class="tabs">${[['aberto','A pagar'],['receber','A receber'],['fechar','A fechar'],['pagos','Pagos no mês']].map(([k,t])=>`<button data-tab="${k}" class="${tab===k?'on':''}">${t}</button>`).join('')}</div><div class="grow" style="flex:1"></div><button class="btn" data-act="importTudo">${ic('up')}Importar do vhsys</button><button class="btn" data-act="baixaLote">${ic('check')}Baixa em lote</button><button class="btn" data-act="novaDespesa">${ic('plus')}Despesa avulsa</button></div>
   ${tab==='aberto'?`<div class="grid k2b">
      <div class="card">${ap.length?ap.map(contaLi).join(''):empty('check','Nada em aberto. 🎉')}</div>
      <div class="card"><h3>${ic('store')}Devido por credor</h3>${Object.entries(porF).sort((a,b)=>b[1]-a[1]).map(([t,v])=>`<div class="row" style="justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line)"><span>${esc(t)}</span><b class="num">${brl(v)}</b></div>`).join('')||'<span class="muted">—</span>'}</div></div>`:''}
@@ -1351,6 +1351,22 @@ function datarOS(lista,rec,ext){
   }
   return lista;
 }
+/* baixa de vários boletos de notas de uma vez (notas antigas que já estavam pagas) */
+function baixaLote(){
+  const abertas=()=>aPagar().filter(x=>x.k==='duplicatas');
+  const L0=abertas();if(!L0.length)return toast('Nenhum boleto de nota em aberto.',true);
+  const def=today();
+  modal('Baixa em lote',`<p class="muted" style="margin-top:0;font-size:13px">Marca como pagos os boletos das notas (XML) que vencem até a data escolhida. Contas que vieram do vhsys não mudam: elas seguem o que o vhsys diz.</p>
+   <form class="form" id="fBL"><label class="f">Vencidos até<input class="in" type="date" name="ate" value="${def}" required></label><label class="f">Autopeça<select class="in" name="forn"><option value="">Todas</option>${fornOptions('')}</select></label></form><div id="blPrev" style="margin-top:10px"></div>`,
+  async()=>{const L=filtro();if(!L.length)throw new Error('Nenhum boleto nesse filtro.');
+    const ids=L.map(x=>x.id);const prev=S.duplicatas.filter(d=>ids.includes(d.id)).map(d=>({id:d.id,pago_em:d.pago_em}));
+    for(let i=0;i<ids.length;i+=200){const part=ids.slice(i,i+200);const{error}=await sb.from('duplicatas').update({pago_em:today()}).in('id',part);if(error)throw error}
+    S.duplicatas.forEach(d=>{if(ids.includes(d.id))d.pago_em=today()});
+    toast(`${ids.length} boleto${ids.length==1?'':'s'} marcado${ids.length==1?'':'s'} como pago${ids.length==1?'':'s'}.`,false,async()=>{for(const p of prev)await upd('duplicatas',p.id,{pago_em:p.pago_em});render()});render()},{ok:'Dar baixa'});
+  const filtro=()=>{const o=Object.fromEntries(new FormData($('#fBL')));return abertas().filter(x=>x.venc<=o.ate&&(!o.forn||S.notas.find(n=>n.id===S.duplicatas.find(d=>d.id===x.id)?.nota_id)?.fornecedor_id===o.forn))};
+  const prev=()=>{const L=filtro();$('#blPrev').innerHTML=`<div class="msg">${L.length} boleto${L.length==1?'':'s'} · <b>${brl(sum(L,x=>x.valor))}</b></div>`};
+  $('#fBL').addEventListener('change',prev);prev();
+}
 /* ---------- IMPORTADOR ÚNICO ---------- */
 let UQ=null;
 function importTudo(){
@@ -1374,13 +1390,14 @@ async function lerTudo(files){
   }
   const ja=new Set(S.ordens.map(o=>o.numero).filter(Boolean)),seen=new Set();
   Q.os=Q.os.filter(o=>{if(seen.has(o.numero))return false;seen.add(o.numero);return true});datarOS(Q.os,Q.receber,Q.extrato);
-  Q.osSemData=Q.os.filter(o=>!o.data&&!ja.has(o.numero));Q.osNovas=Q.os.filter(o=>o.data&&(!o.numero||!ja.has(o.numero)));
+  Q.osAbertas=Q.os.filter(o=>/ABERTO|ANDAMENTO/.test(norm(o.situacao))&&!ja.has(o.numero));
+  Q.osSemData=Q.os.filter(o=>!o.data&&!ja.has(o.numero)&&!Q.osAbertas.includes(o));Q.osNovas=Q.os.filter(o=>o.data&&(!o.numero||!ja.has(o.numero))&&!Q.osAbertas.includes(o));
   const jaPag=new Set(S.cartao_mov.map(m=>m.codigo).filter(Boolean));Q.pagNovos=Q.pag.filter(i=>!i.codigo||!jaPag.has(i.codigo));
   UQ=Q;
   const per=(arr,k)=>{const ds=arr.map(x=>x[k]).filter(Boolean).sort();return ds.length?`${fd(ds[0])} a ${fd(ds[ds.length-1])}`:''};
   const novos=(arr,t)=>{const ex=new Set(S[t].map(x=>x.chave));const m=new Set(arr.map(x=>x.chave));return[...m].filter(k=>!ex.has(k)).length};
   const linhas=[
-    Q.os.length&&['wrench','Ordens de serviço',`${Q.os.length} O.S. · ${per(Q.os,'data')}`,`${Q.osNovas.length} nova${Q.osNovas.length==1?'':'s'} · ${brl(sum(Q.osNovas,o=>o.total))}${Q.osSemData.length?` · <span style="color:var(--bad)">${Q.osSemData.length} sem data</span>`:''}`],
+    Q.os.length&&['wrench','Ordens de serviço',`${Q.os.length} O.S. · ${per(Q.os,'data')}`,`${Q.osNovas.length} nova${Q.osNovas.length==1?'':'s'} · ${brl(sum(Q.osNovas,o=>o.total))}${Q.osAbertas.length?` · ${Q.osAbertas.length} em aberto (entram quando forem atendidas)`:''}${Q.osSemData.length?` · <span style="color:var(--bad)">${Q.osSemData.length} sem data</span>`:''}`],
     Q.extrato.length&&['bank','Extrato',`${Q.extrato.length} lançamentos · ${per(Q.extrato,'data')}`,`${novos(Q.extrato,'extrato')} novo(s) · entradas ${brl(sum(Q.extrato,e=>e.entrada))} · saídas ${brl(sum(Q.extrato,e=>e.saida))}`],
     Q.receber.length&&['dl','Contas a receber',`${Q.receber.length} contas · ${per(Q.receber,'vencimento')}`,`${Q.receber.filter(abertoR).length} em aberto · ${brl(sum(Q.receber.filter(abertoR),r=>r.valor-r.valor_pago))}`],
     Q.pagar.length&&['conta','Contas a pagar',`${Q.pagar.length} contas · ${per(Q.pagar,'vencimento')}`,`${Q.pagar.filter(abertoP).length} em aberto · ${brl(sum(Q.pagar.filter(abertoP),p=>p.valor-p.valor_pago))}`],
@@ -1562,6 +1579,7 @@ document.addEventListener('click',async e=>{
     case'importOS':return importOS();
     case'importTudo':return importTudo();
     case'cfgBancos':return cfgBancos();
+    case'baixaLote':return baixaLote();
     case'cfgCustos':return cfgCustos();
     case'delMov':if(!confirm('Excluir esta venda do cartão?'))return;await del('cartao_mov',id);return render();
     case'copiarMensal':return copyText(mensalTSV(DIA)).then(()=>toast('Linha MENSAL copiada. Cole na coluna A do dia.'));
